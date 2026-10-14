@@ -8,7 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from retrievers import KeywordRetriever, LLMRetriever, RerankRetriever, VectorRetriever
+from retrievers import (
+    KeywordRetriever,
+    LLMIdsCachedRetriever,
+    LLMIdsRetriever,
+    LLMRetriever,
+    RerankRetriever,
+    VectorRetriever,
+)
 
 DATA_DIR = Path(__file__).parent / "data"
 TOP_K = 3
@@ -20,6 +27,9 @@ SETTINGS = {
     "rerank": (RerankRetriever, [0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.50, 0.70]),
     # LLM scores are 0-3 divided by 3, so only four distinct levels exist.
     "llm": (LLMRetriever, [0.0, 0.33, 0.66, 1.0]),
+    # The ids-only variants are binary: selected (1.0) or not (0.0).
+    "llm_ids": (LLMIdsRetriever, [0.0, 1.0]),
+    "llm_ids_cached": (LLMIdsCachedRetriever, [0.0, 1.0]),
 }
 
 

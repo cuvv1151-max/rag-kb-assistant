@@ -5,6 +5,8 @@ Usage:
     python evaluate.py vector
     python evaluate.py rerank
     python evaluate.py llm
+    python evaluate.py llm_ids
+    python evaluate.py llm_ids_cached
     python evaluate.py all
 """
 import json
@@ -17,7 +19,14 @@ from dotenv import load_dotenv
 # Load .env before any model import, so settings such as HF_HOME take effect.
 load_dotenv()
 
-from retrievers import KeywordRetriever, LLMRetriever, RerankRetriever, VectorRetriever
+from retrievers import (
+    KeywordRetriever,
+    LLMIdsCachedRetriever,
+    LLMIdsRetriever,
+    LLMRetriever,
+    RerankRetriever,
+    VectorRetriever,
+)
 
 DATA_DIR = Path(__file__).parent / "data"
 K_VALUES = (1, 3, 5)
@@ -99,12 +108,16 @@ RETRIEVERS = {
     "vector": VectorRetriever,
     "rerank": RerankRetriever,
     "llm": LLMRetriever,
+    "llm_ids": LLMIdsRetriever,
+    "llm_ids_cached": LLMIdsCachedRetriever,
 }
 
 
 if __name__ == "__main__":
     choice = sys.argv[1] if len(sys.argv) > 1 else "all"
-    names = list(RETRIEVERS) if choice == "all" else [choice]
+    # "all" covers the local retrievers only; LLM variants are run explicitly.
+    local = [n for n in RETRIEVERS if not n.startswith("llm")]
+    names = local if choice == "all" else [choice]
     unknown = [n for n in names if n not in RETRIEVERS]
     if unknown:
         sys.exit(f"Unknown retriever {unknown}; choose from {list(RETRIEVERS)} or 'all'")

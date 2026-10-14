@@ -145,10 +145,17 @@ class LLMRetriever:
 
     Unlike a cross-encoder, the LLM brings world knowledge (slang, synonyms,
     implied meaning) and follows a task definition we write ourselves.
-    Responses are cached on disk so repeated evaluation runs cost nothing.
+    Responses are cached on disk so repeated evaluation runs cost nothing,
+    and every real API call is logged for the cost / latency analysis.
+
+    Variant A0 (this class): rate every candidate 0-3, message first in the prompt.
     """
 
     name = "llm"
+    MAX_SCORE = 3
+
+    # deepseek-flash, peak-hour price in CNY per million tokens (checked 2026-10-15).
+    PRICE_PER_MILLION = {"cache_hit": 0.04, "cache_miss": 2.0, "output": 8.0}
 
     SYSTEM_PROMPT = (
         "You select long-term memories that help an AI companion reply to the "
@@ -172,13 +179,11 @@ not by shared words.
 Return JSON in exactly this form, with one entry for every candidate:
 {{"ratings": [{{"id": <memory id>, "score": <0-3>}}]}}"""
 
-    MAX_SCORE = 3
-
     def __init__(
         self,
         memories: list[dict],
         candidates: int = 10,
-        cache_path: str = "cache/llm_judgments.json",
+        usage_log_path: str = "cache/usage_log.jsonl",
     ):
         import os
 
@@ -187,30 +192,51 @@ Return JSON in exactly this form, with one entry for every candidate:
         self.vector = VectorRetriever(memories)
         self.content = {m["id"]: m["content"] for m in memories}
         self.candidates = candidates
-        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")
         self.client = OpenAI(
             api_key=os.getenv("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com"
         )
 
-        self.cache_path = Path(cache_path)
+        # One cache file per (model, variant), so runs never mix and can be compared.
+        self.cache_path = Path(f"cache/judgments_{self.model}_{self.name}.json")
         self.cache = (
             json.loads(self.cache_path.read_text(encoding="utf-8"))
             if self.cache_path.exists()
             else {}
         )
-        # Usage statistics for the cost / latency analysis.
+        self.usage_log_path = Path(usage_log_path)
+        # Usage statistics for this run.
         self.api_calls = 0
         self.cache_hits = 0
         self.prompt_tokens = 0
+        self.prompt_cache_hit_tokens = 0
         self.completion_tokens = 0
         self.total_seconds = 0.0
+
+    # ----- prompt and parsing: overridden by the optimised variants -----
+
+    def build_messages(self, query: str, listing: str) -> list[dict]:
+        return [
+            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "user", "content": self.USER_PROMPT.format(query=query, candidates=listing)},
+        ]
+
+    def parse_scores(self, reply: dict, candidate_ids: list[int]) -> dict[int, int]:
+        scores = {mid: 0 for mid in candidate_ids}
+        for item in reply["ratings"]:
+            mid, score = int(item["id"]), int(item["score"])
+            if mid in scores:  # ignore ids the model invented
+                scores[mid] = max(0, min(self.MAX_SCORE, score))
+        return scores
+
+    # ----- shared machinery -----
 
     def _judge(self, query: str, candidate_ids: list[int]) -> dict[int, int]:
         """Return {memory_id: score} for the candidates, using the cache when possible."""
         # Present candidates in id order: deterministic, and it does not leak the
         # vector ranking to the judge. The cache key uses the same order.
         candidate_ids = sorted(candidate_ids)
-        cache_key = f"{self.model}|{query}|{','.join(map(str, candidate_ids))}"
+        cache_key = f"{self.model}|{self.name}|{query}|{','.join(map(str, candidate_ids))}"
         if cache_key in self.cache:
             self.cache_hits += 1
             return {int(k): v for k, v in self.cache[cache_key].items()}
@@ -219,28 +245,28 @@ Return JSON in exactly this form, with one entry for every candidate:
         start = time.perf_counter()
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=[
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": self.USER_PROMPT.format(query=query, candidates=listing)},
-            ],
+            messages=self.build_messages(query, listing),
             response_format={"type": "json_object"},
             temperature=0,
+            # deepseek-flash thinks by default; reasoning tokens are billed and slow.
+            extra_body={"thinking": {"type": "disabled"}},
         )
-        self.total_seconds += time.perf_counter() - start
+        seconds = time.perf_counter() - start
+        usage = response.usage
+        hit_tokens = getattr(usage, "prompt_cache_hit_tokens", None) or 0
         self.api_calls += 1
-        self.prompt_tokens += response.usage.prompt_tokens
-        self.completion_tokens += response.usage.completion_tokens
+        self.total_seconds += seconds
+        self.prompt_tokens += usage.prompt_tokens
+        self.prompt_cache_hit_tokens += hit_tokens
+        self.completion_tokens += usage.completion_tokens
+        self._log_usage(query, response.model, usage, hit_tokens, seconds)
 
-        scores = {mid: 0 for mid in candidate_ids}
         try:
-            for item in json.loads(response.choices[0].message.content)["ratings"]:
-                mid, score = int(item["id"]), int(item["score"])
-                if mid in scores:  # ignore ids the model invented
-                    scores[mid] = max(0, min(self.MAX_SCORE, score))
+            scores = self.parse_scores(json.loads(response.choices[0].message.content), candidate_ids)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             # Do not cache a failed reply, so the next run retries this query.
             print(f"  [warn] could not parse LLM output for: {query}")
-            return scores
+            return {mid: 0 for mid in candidate_ids}
 
         self.cache[cache_key] = scores
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +274,22 @@ Return JSON in exactly this form, with one entry for every candidate:
             json.dumps(self.cache, ensure_ascii=False, indent=1), encoding="utf-8"
         )
         return scores
+
+    def _log_usage(self, query, served_model, usage, hit_tokens, seconds) -> None:
+        """Append one line per real API call, so cost figures survive the terminal."""
+        record = {
+            "variant": self.name,
+            "requested_model": self.model,
+            "served_model": served_model,
+            "query": query,
+            "prompt_tokens": usage.prompt_tokens,
+            "prompt_cache_hit_tokens": hit_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "seconds": round(seconds, 3),
+        }
+        self.usage_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.usage_log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def retrieve(self, query: str, k: int = 5) -> list[tuple[int, float]]:
         candidate_ids = [mid for mid, _ in self.vector.retrieve(query, k=self.candidates)]
@@ -257,11 +299,72 @@ Return JSON in exactly this form, with one entry for every candidate:
         return [(mid, scores[mid] / self.MAX_SCORE) for mid in ranked[:k]]
 
     def report(self) -> None:
-        """Print API usage, so cost and latency can be compared with other methods."""
-        print(f"\nLLM usage: {self.api_calls} API calls, {self.cache_hits} cache hits")
-        if self.api_calls:
-            print(f"  prompt tokens:     {self.prompt_tokens} "
-                  f"({self.prompt_tokens / self.api_calls:.0f} per call)")
-            print(f"  completion tokens: {self.completion_tokens} "
-                  f"({self.completion_tokens / self.api_calls:.0f} per call)")
-            print(f"  latency:           {self.total_seconds / self.api_calls:.2f} s per call")
+        """Print API usage and an estimated cost for the calls made in this run."""
+        print(f"\nLLM usage ({self.name}, {self.model}): "
+              f"{self.api_calls} API calls, {self.cache_hits} cache hits")
+        if not self.api_calls:
+            return
+        n = self.api_calls
+        miss_tokens = self.prompt_tokens - self.prompt_cache_hit_tokens
+        price = self.PRICE_PER_MILLION
+        cost = (self.prompt_cache_hit_tokens * price["cache_hit"]
+                + miss_tokens * price["cache_miss"]
+                + self.completion_tokens * price["output"]) / 1_000_000
+        print(f"  prompt tokens:     {self.prompt_tokens / n:.0f} per call "
+              f"({self.prompt_cache_hit_tokens / n:.0f} served from DeepSeek's prefix cache)")
+        print(f"  completion tokens: {self.completion_tokens / n:.0f} per call")
+        print(f"  latency:           {self.total_seconds / n:.2f} s per call")
+        print(f"  est. cost:         {cost / n * 10_000:.2f} CNY per 10k messages (peak-hour price)")
+
+
+class LLMIdsRetriever(LLMRetriever):
+    """Variant A1: return only the ids of directly relevant memories.
+
+    The product only uses score-3 memories, so rating all ten candidates spends
+    output tokens (the most expensive kind) on information that is thrown away.
+    Prompt order is unchanged from A0, so only the output format differs.
+    """
+
+    name = "llm_ids"
+
+    INSTRUCTIONS = """Select only the memories that are directly relevant: without them,
+a natural, caring reply to this message would miss something important.
+Leave out memories that are merely related.
+Judge by meaning, including implied meaning, synonyms and everyday slang,
+not by shared words.
+
+Return JSON in exactly this form (an empty list if none qualify):
+{"relevant_ids": [<memory id>, ...]}"""
+
+    def build_messages(self, query: str, listing: str) -> list[dict]:
+        user = (f'The user just said:\n"{query}"\n\n'
+                f"Candidate memories about the user:\n{listing}\n\n{self.INSTRUCTIONS}")
+        return [
+            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "user", "content": user},
+        ]
+
+    def parse_scores(self, reply: dict, candidate_ids: list[int]) -> dict[int, int]:
+        selected = {int(mid) for mid in reply["relevant_ids"]}
+        # Selected memories get the top score; ids the model invented are ignored.
+        return {mid: (self.MAX_SCORE if mid in selected else 0) for mid in candidate_ids}
+
+
+class LLMIdsCachedRetriever(LLMIdsRetriever):
+    """Variant A2: same wording as A1, but all fixed instructions come first.
+
+    DeepSeek caches identical prompt prefixes and bills cache hits at about
+    1/50 of the normal input price. Putting the fixed text in the system
+    message, and the per-message content last, makes that prefix reusable.
+    """
+
+    name = "llm_ids_cached"
+
+    def build_messages(self, query: str, listing: str) -> list[dict]:
+        system = f"{self.SYSTEM_PROMPT}\n\n{self.INSTRUCTIONS}"
+        user = (f"Candidate memories about the user:\n{listing}\n\n"
+                f'The user just said:\n"{query}"')
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]

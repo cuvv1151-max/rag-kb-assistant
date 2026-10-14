@@ -1,4 +1,5 @@
-"""Compare two cached LLM judgment runs to check how repeatable the judge is.
+"""Compare two cached LLM judgment runs: repeatability of one setup, or
+agreement between two models / prompt variants.
 
 Usage:
     python compare_runs.py cache/llm_judgments_run1.json cache/llm_judgments.json
@@ -11,6 +12,13 @@ path_a, path_b = sys.argv[1], sys.argv[2]
 run_a = json.load(open(path_a, encoding="utf-8"))
 run_b = json.load(open(path_b, encoding="utf-8"))
 
+# Match entries on (query, candidate ids), the last two parts of the cache key,
+# so runs with different models or prompt variants can be compared.
+def by_query(run: dict) -> dict:
+    return {tuple(key.split("|")[-2:]): scores for key, scores in run.items()}
+
+
+run_a, run_b = by_query(run_a), by_query(run_b)
 shared_keys = sorted(set(run_a) & set(run_b))
 print(f"Queries in run A: {len(run_a)}, run B: {len(run_b)}, compared: {len(shared_keys)}")
 
@@ -20,7 +28,7 @@ top_level_flips = 0  # memories that are score 3 in one run but not the other
 diffs = Counter()
 changed = []
 for key in shared_keys:
-    query = key.split("|")[1]
+    query = key[0]
     for mid, score_a in run_a[key].items():
         score_b = run_b[key].get(mid)
         if score_b is None:
