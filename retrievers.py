@@ -48,3 +48,53 @@ class KeywordRetriever:
         scored = [item for item in scored if item[1] > 0]
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:k]
+
+    
+
+class VectorRetriever:
+    """Rank memories by cosine similarity of sentence embeddings.
+
+    Each memory is encoded once into a vector and stored in a Chroma
+    collection. A query is encoded the same way, and Chroma returns the
+    memories whose vectors point in the most similar direction.
+    """
+
+    name = "vector"
+
+    def __init__(
+        self,
+        memories: list[dict],
+        model_name: str = "BAAI/bge-small-zh-v1.5",
+        db_path: str = "chroma_db",
+    ):
+        # Imported here so the keyword baseline runs without these packages.
+        import chromadb
+        from sentence_transformers import SentenceTransformer
+
+        self.model = SentenceTransformer(model_name)
+        client = chromadb.PersistentClient(path=db_path)
+
+        # Rebuild the collection on every run so it never holds stale vectors.
+        collection_name = "memories"
+        if collection_name in [c.name for c in client.list_collections()]:
+            client.delete_collection(collection_name)
+        self.collection = client.create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"},  # rank by cosine distance
+        )
+
+        texts = [m["content"] for m in memories]
+        embeddings = self.model.encode(texts, normalize_embeddings=True)
+        self.collection.add(
+            ids=[str(m["id"]) for m in memories],
+            embeddings=embeddings.tolist(),
+            documents=texts,
+        )
+
+    def retrieve(self, query: str, k: int = 5) -> list[tuple[int, float]]:
+        query_vec = self.model.encode([query], normalize_embeddings=True)
+        result = self.collection.query(query_embeddings=query_vec.tolist(), n_results=k)
+        ids = result["ids"][0]
+        distances = result["distances"][0]
+        # Chroma returns cosine distance = 1 - cosine similarity; convert back.
+        return [(int(mid), 1.0 - dist) for mid, dist in zip(ids, distances)]

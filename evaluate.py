@@ -1,9 +1,21 @@
-"""Step 3: evaluate a retriever on the labelled query set."""
+"""Evaluate memory retrievers on the labelled query set.
+
+Usage:
+    python evaluate.py keyword
+    python evaluate.py vector
+    python evaluate.py all
+"""
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-from retrievers import KeywordRetriever
+from dotenv import load_dotenv
+
+# Load .env before any model import, so settings such as HF_HOME take effect.
+load_dotenv()
+
+from retrievers import KeywordRetriever, VectorRetriever
 
 DATA_DIR = Path(__file__).parent / "data"
 K_VALUES = (1, 3, 5)
@@ -80,6 +92,19 @@ def evaluate(retriever, queries: list[dict], memories: list[dict]) -> None:
             print(f"      missed {mid}: {content[mid]}")
 
 
+RETRIEVERS = {
+    "keyword": KeywordRetriever,
+    "vector": VectorRetriever,
+}
+
+
 if __name__ == "__main__":
+    choice = sys.argv[1] if len(sys.argv) > 1 else "all"
+    names = list(RETRIEVERS) if choice == "all" else [choice]
+    unknown = [n for n in names if n not in RETRIEVERS]
+    if unknown:
+        sys.exit(f"Unknown retriever {unknown}; choose from {list(RETRIEVERS)} or 'all'")
+
     memories, queries = load_data()
-    evaluate(KeywordRetriever(memories), queries, memories)
+    for name in names:
+        evaluate(RETRIEVERS[name](memories), queries, memories)
