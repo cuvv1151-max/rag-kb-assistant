@@ -1,5 +1,8 @@
 """Memory retrievers. Each retriever returns a ranked list of (memory_id, score)."""
+import json
 import re
+import time
+from pathlib import Path
 
 # Characters kept for keyword matching: CJK ideographs, ASCII letters and digits.
 _NON_WORD = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9]+")
@@ -49,7 +52,6 @@ class KeywordRetriever:
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored[:k]
 
-    
 
 class VectorRetriever:
     """Rank memories by cosine similarity of sentence embeddings.
@@ -99,7 +101,6 @@ class VectorRetriever:
         # Chroma returns cosine distance = 1 - cosine similarity; convert back.
         return [(int(mid), 1.0 - dist) for mid, dist in zip(ids, distances)]
 
-    
 
 class RerankRetriever:
     """Two-stage retrieval: vector search proposes candidates, a cross-encoder
@@ -136,3 +137,131 @@ class RerankRetriever:
         scores = self.reranker.predict(pairs, activation_fn=self.activation)
         ranked = sorted(zip(candidate_ids, scores), key=lambda item: item[1], reverse=True)
         return [(mid, float(score)) for mid, score in ranked[:k]]
+
+
+class LLMRetriever:
+    """Two-stage retrieval with an LLM judge: vector search proposes candidates,
+    then DeepSeek rates how useful each candidate is for replying to the message.
+
+    Unlike a cross-encoder, the LLM brings world knowledge (slang, synonyms,
+    implied meaning) and follows a task definition we write ourselves.
+    Responses are cached on disk so repeated evaluation runs cost nothing.
+    """
+
+    name = "llm"
+
+    SYSTEM_PROMPT = (
+        "You select long-term memories that help an AI companion reply to the "
+        "user's latest chat message. Answer in JSON only."
+    )
+
+    USER_PROMPT = """The user just said:
+"{query}"
+
+Candidate memories about the user:
+{candidates}
+
+Rate how useful each memory is for writing a natural, caring reply to this message:
+3 = directly relevant; the reply would miss something important without it
+2 = clearly related; worth bringing up
+1 = loosely related; probably not worth bringing up
+0 = unrelated
+Judge by meaning, including implied meaning, synonyms and everyday slang,
+not by shared words.
+
+Return JSON in exactly this form, with one entry for every candidate:
+{{"ratings": [{{"id": <memory id>, "score": <0-3>}}]}}"""
+
+    MAX_SCORE = 3
+
+    def __init__(
+        self,
+        memories: list[dict],
+        candidates: int = 10,
+        cache_path: str = "cache/llm_judgments.json",
+    ):
+        import os
+
+        from openai import OpenAI
+
+        self.vector = VectorRetriever(memories)
+        self.content = {m["id"]: m["content"] for m in memories}
+        self.candidates = candidates
+        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        self.client = OpenAI(
+            api_key=os.getenv("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com"
+        )
+
+        self.cache_path = Path(cache_path)
+        self.cache = (
+            json.loads(self.cache_path.read_text(encoding="utf-8"))
+            if self.cache_path.exists()
+            else {}
+        )
+        # Usage statistics for the cost / latency analysis.
+        self.api_calls = 0
+        self.cache_hits = 0
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_seconds = 0.0
+
+    def _judge(self, query: str, candidate_ids: list[int]) -> dict[int, int]:
+        """Return {memory_id: score} for the candidates, using the cache when possible."""
+        # Present candidates in id order: deterministic, and it does not leak the
+        # vector ranking to the judge. The cache key uses the same order.
+        candidate_ids = sorted(candidate_ids)
+        cache_key = f"{self.model}|{query}|{','.join(map(str, candidate_ids))}"
+        if cache_key in self.cache:
+            self.cache_hits += 1
+            return {int(k): v for k, v in self.cache[cache_key].items()}
+
+        listing = "\n".join(f"[{mid}] {self.content[mid]}" for mid in candidate_ids)
+        start = time.perf_counter()
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": self.USER_PROMPT.format(query=query, candidates=listing)},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        self.total_seconds += time.perf_counter() - start
+        self.api_calls += 1
+        self.prompt_tokens += response.usage.prompt_tokens
+        self.completion_tokens += response.usage.completion_tokens
+
+        scores = {mid: 0 for mid in candidate_ids}
+        try:
+            for item in json.loads(response.choices[0].message.content)["ratings"]:
+                mid, score = int(item["id"]), int(item["score"])
+                if mid in scores:  # ignore ids the model invented
+                    scores[mid] = max(0, min(self.MAX_SCORE, score))
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # Do not cache a failed reply, so the next run retries this query.
+            print(f"  [warn] could not parse LLM output for: {query}")
+            return scores
+
+        self.cache[cache_key] = scores
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path.write_text(
+            json.dumps(self.cache, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        return scores
+
+    def retrieve(self, query: str, k: int = 5) -> list[tuple[int, float]]:
+        candidate_ids = [mid for mid, _ in self.vector.retrieve(query, k=self.candidates)]
+        scores = self._judge(query, candidate_ids)
+        # Sort by LLM score; ties keep the vector order (Python's sort is stable).
+        ranked = sorted(candidate_ids, key=lambda mid: scores[mid], reverse=True)
+        return [(mid, scores[mid] / self.MAX_SCORE) for mid in ranked[:k]]
+
+    def report(self) -> None:
+        """Print API usage, so cost and latency can be compared with other methods."""
+        print(f"\nLLM usage: {self.api_calls} API calls, {self.cache_hits} cache hits")
+        if self.api_calls:
+            print(f"  prompt tokens:     {self.prompt_tokens} "
+                  f"({self.prompt_tokens / self.api_calls:.0f} per call)")
+            print(f"  completion tokens: {self.completion_tokens} "
+                  f"({self.completion_tokens / self.api_calls:.0f} per call)")
+            print(f"  latency:           {self.total_seconds / self.api_calls:.2f} s per call")

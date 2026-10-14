@@ -3,6 +3,8 @@
 Usage:
     python evaluate.py keyword
     python evaluate.py vector
+    python evaluate.py rerank
+    python evaluate.py llm
     python evaluate.py all
 """
 import json
@@ -15,7 +17,7 @@ from dotenv import load_dotenv
 # Load .env before any model import, so settings such as HF_HOME take effect.
 load_dotenv()
 
-from retrievers import KeywordRetriever, RerankRetriever, VectorRetriever
+from retrievers import KeywordRetriever, LLMRetriever, RerankRetriever, VectorRetriever
 
 DATA_DIR = Path(__file__).parent / "data"
 K_VALUES = (1, 3, 5)
@@ -96,6 +98,7 @@ RETRIEVERS = {
     "keyword": KeywordRetriever,
     "vector": VectorRetriever,
     "rerank": RerankRetriever,
+    "llm": LLMRetriever,
 }
 
 
@@ -108,4 +111,7 @@ if __name__ == "__main__":
 
     memories, queries = load_data()
     for name in names:
-        evaluate(RETRIEVERS[name](memories), queries, memories)
+        retriever = RETRIEVERS[name](memories)
+        evaluate(retriever, queries, memories)
+        if hasattr(retriever, "report"):  # cost / latency summary for API-based retrievers
+            retriever.report()

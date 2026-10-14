@@ -8,13 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from retrievers import KeywordRetriever, RerankRetriever, VectorRetriever
+from retrievers import KeywordRetriever, LLMRetriever, RerankRetriever, VectorRetriever
 
 DATA_DIR = Path(__file__).parent / "data"
 RETRIEVERS = {
     "keyword": KeywordRetriever,
     "vector": VectorRetriever,
     "rerank": RerankRetriever,
+    "llm": LLMRetriever,
 }
 
 name = sys.argv[1] if len(sys.argv) > 1 else "vector"
