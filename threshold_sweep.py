@@ -10,9 +10,11 @@ load_dotenv()
 
 from retrievers import (
     KeywordRetriever,
+    LLMGroupedRetriever,
     LLMIdsCachedRetriever,
     LLMIdsRetriever,
     LLMRetriever,
+    LLMScoreListRetriever,
     RerankRetriever,
     VectorRetriever,
 )
@@ -30,6 +32,8 @@ SETTINGS = {
     # The ids-only variants are binary: selected (1.0) or not (0.0).
     "llm_ids": (LLMIdsRetriever, [0.0, 1.0]),
     "llm_ids_cached": (LLMIdsCachedRetriever, [0.0, 1.0]),
+    "llm_grouped": (LLMGroupedRetriever, [0.0, 0.33, 0.66, 1.0]),
+    "llm_score_list": (LLMScoreListRetriever, [0.0, 0.33, 0.66, 1.0]),
 }
 
 

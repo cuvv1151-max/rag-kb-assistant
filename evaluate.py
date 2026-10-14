@@ -7,6 +7,8 @@ Usage:
     python evaluate.py llm
     python evaluate.py llm_ids
     python evaluate.py llm_ids_cached
+    python evaluate.py llm_grouped
+    python evaluate.py llm_score_list
     python evaluate.py all
 """
 import json
@@ -21,9 +23,11 @@ load_dotenv()
 
 from retrievers import (
     KeywordRetriever,
+    LLMGroupedRetriever,
     LLMIdsCachedRetriever,
     LLMIdsRetriever,
     LLMRetriever,
+    LLMScoreListRetriever,
     RerankRetriever,
     VectorRetriever,
 )
@@ -110,6 +114,8 @@ RETRIEVERS = {
     "llm": LLMRetriever,
     "llm_ids": LLMIdsRetriever,
     "llm_ids_cached": LLMIdsCachedRetriever,
+    "llm_grouped": LLMGroupedRetriever,
+    "llm_score_list": LLMScoreListRetriever,
 }
 
 

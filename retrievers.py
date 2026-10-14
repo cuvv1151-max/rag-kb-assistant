@@ -368,3 +368,78 @@ class LLMIdsCachedRetriever(LLMIdsRetriever):
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
+
+
+class LLMGroupedRetriever(LLMRetriever):
+    """Variant A3: keep A0's 0-3 rubric and prompt order, but return only the
+    non-zero scores, grouped by score.
+
+    A1 cut output tokens but dropped the graded rubric, and the judge became
+    more permissive (score-2 memories were selected too). A3 tests whether the
+    rubric, not the output format, is what keeps the judge strict.
+    """
+
+    name = "llm_grouped"
+
+    USER_PROMPT = """The user just said:
+"{query}"
+
+Candidate memories about the user:
+{candidates}
+
+Rate how useful each memory is for writing a natural, caring reply to this message:
+3 = directly relevant; the reply would miss something important without it
+2 = clearly related; worth bringing up
+1 = loosely related; probably not worth bringing up
+0 = unrelated
+Judge by meaning, including implied meaning, synonyms and everyday slang,
+not by shared words.
+
+Return JSON that groups memory ids by score. Leave out memories that score 0,
+and use an empty list for a score that no memory received:
+{{"3": [<memory id>, ...], "2": [...], "1": [...]}}"""
+
+    def parse_scores(self, reply: dict, candidate_ids: list[int]) -> dict[int, int]:
+        scores = {mid: 0 for mid in candidate_ids}
+        for level in (1, 2, 3):
+            for mid in reply.get(str(level), []):
+                mid = int(mid)
+                if mid in scores:  # ignore ids the model invented
+                    scores[mid] = max(scores[mid], level)
+        return scores
+
+
+class LLMScoreListRetriever(LLMRetriever):
+    """Variant A4: keep A0's rubric, prompt order and one explicit score for
+    every candidate, but return the scores as a bare list in candidate order.
+
+    A3 omitted zero scores and its scores drifted upward. A4 tests whether
+    explicitly scoring every candidate (including the zeros) is what keeps the
+    judge calibrated, while still cutting the verbose JSON of A0.
+    """
+
+    name = "llm_score_list"
+
+    USER_PROMPT = """The user just said:
+"{query}"
+
+Candidate memories about the user:
+{candidates}
+
+Rate how useful each memory is for writing a natural, caring reply to this message:
+3 = directly relevant; the reply would miss something important without it
+2 = clearly related; worth bringing up
+1 = loosely related; probably not worth bringing up
+0 = unrelated
+Judge by meaning, including implied meaning, synonyms and everyday slang,
+not by shared words.
+
+Return JSON with exactly one score per candidate, in the same order as the list above:
+{{"scores": [<score of the first candidate>, <score of the second candidate>, ...]}}"""
+
+    def parse_scores(self, reply: dict, candidate_ids: list[int]) -> dict[int, int]:
+        scores = [int(s) for s in reply["scores"]]
+        if len(scores) != len(candidate_ids):
+            # A misaligned list cannot be mapped back safely; treat it as a failed reply.
+            raise ValueError(f"expected {len(candidate_ids)} scores, got {len(scores)}")
+        return {mid: max(0, min(self.MAX_SCORE, s)) for mid, s in zip(candidate_ids, scores)}

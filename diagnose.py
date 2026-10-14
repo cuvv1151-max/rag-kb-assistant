@@ -10,9 +10,11 @@ load_dotenv()
 
 from retrievers import (
     KeywordRetriever,
+    LLMGroupedRetriever,
     LLMIdsCachedRetriever,
     LLMIdsRetriever,
     LLMRetriever,
+    LLMScoreListRetriever,
     RerankRetriever,
     VectorRetriever,
 )
@@ -25,6 +27,8 @@ RETRIEVERS = {
     "llm": LLMRetriever,
     "llm_ids": LLMIdsRetriever,
     "llm_ids_cached": LLMIdsCachedRetriever,
+    "llm_grouped": LLMGroupedRetriever,
+    "llm_score_list": LLMScoreListRetriever,
 }
 
 name = sys.argv[1] if len(sys.argv) > 1 else "vector"
