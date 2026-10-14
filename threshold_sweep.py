@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from retrievers import KeywordRetriever, VectorRetriever
+from retrievers import KeywordRetriever, RerankRetriever, VectorRetriever
 
 DATA_DIR = Path(__file__).parent / "data"
 TOP_K = 3
@@ -17,6 +17,7 @@ TOP_K = 3
 SETTINGS = {
     "keyword": (KeywordRetriever, [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15]),
     "vector": (VectorRetriever, [0.40, 0.45, 0.50, 0.525, 0.55, 0.575, 0.60, 0.65]),
+    "rerank": (RerankRetriever, [0.01, 0.02, 0.05, 0.10, 0.20, 0.30, 0.50, 0.70]),
 }
 
 

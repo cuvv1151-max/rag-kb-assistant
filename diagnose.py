@@ -8,10 +8,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from retrievers import KeywordRetriever, VectorRetriever
+from retrievers import KeywordRetriever, RerankRetriever, VectorRetriever
 
 DATA_DIR = Path(__file__).parent / "data"
-RETRIEVERS = {"keyword": KeywordRetriever, "vector": VectorRetriever}
+RETRIEVERS = {
+    "keyword": KeywordRetriever,
+    "vector": VectorRetriever,
+    "rerank": RerankRetriever,
+}
 
 name = sys.argv[1] if len(sys.argv) > 1 else "vector"
 memories = json.loads((DATA_DIR / "memories.json").read_text(encoding="utf-8"))

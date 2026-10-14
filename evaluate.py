@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 # Load .env before any model import, so settings such as HF_HOME take effect.
 load_dotenv()
 
-from retrievers import KeywordRetriever, VectorRetriever
+from retrievers import KeywordRetriever, RerankRetriever, VectorRetriever
 
 DATA_DIR = Path(__file__).parent / "data"
 K_VALUES = (1, 3, 5)
@@ -95,6 +95,7 @@ def evaluate(retriever, queries: list[dict], memories: list[dict]) -> None:
 RETRIEVERS = {
     "keyword": KeywordRetriever,
     "vector": VectorRetriever,
+    "rerank": RerankRetriever,
 }
 
 

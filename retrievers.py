@@ -98,3 +98,41 @@ class VectorRetriever:
         distances = result["distances"][0]
         # Chroma returns cosine distance = 1 - cosine similarity; convert back.
         return [(int(mid), 1.0 - dist) for mid, dist in zip(ids, distances)]
+
+    
+
+class RerankRetriever:
+    """Two-stage retrieval: vector search proposes candidates, a cross-encoder
+    re-scores each (query, memory) pair and re-orders them.
+
+    A bi-encoder (the vector stage) encodes query and memory separately and
+    only compares the two vectors. A cross-encoder reads both texts together,
+    so it can judge whether the memory actually answers the query. It is much
+    slower, which is why it only re-scores a short candidate list.
+    """
+
+    name = "rerank"
+
+    def __init__(
+        self,
+        memories: list[dict],
+        reranker_name: str = "BAAI/bge-reranker-base",
+        candidates: int = 10,
+    ):
+        import torch
+        from sentence_transformers import CrossEncoder
+
+        self.vector = VectorRetriever(memories)
+        self.reranker = CrossEncoder(reranker_name)
+        self.activation = torch.nn.Sigmoid()  # map raw logits to a 0-1 relevance score
+        self.candidates = candidates
+        self.content = {m["id"]: m["content"] for m in memories}
+
+    def retrieve(self, query: str, k: int = 5) -> list[tuple[int, float]]:
+        # Stage 1: cheap recall-oriented candidate generation.
+        candidate_ids = [mid for mid, _ in self.vector.retrieve(query, k=self.candidates)]
+        # Stage 2: precise re-scoring of each (query, memory) pair.
+        pairs = [(query, self.content[mid]) for mid in candidate_ids]
+        scores = self.reranker.predict(pairs, activation_fn=self.activation)
+        ranked = sorted(zip(candidate_ids, scores), key=lambda item: item[1], reverse=True)
+        return [(mid, float(score)) for mid, score in ranked[:k]]
