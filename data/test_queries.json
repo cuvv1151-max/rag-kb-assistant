@@ -6,7 +6,7 @@
   {"id": "q05", "query": "我家主子又把沙发抓坏了", "relevant_ids": [15], "category": "semantic"},
   {"id": "q06", "query": "这两天一直在投简历，有点累", "relevant_ids": [12], "category": "semantic"},
   {"id": "q07", "query": "加班加到凌晨，躺下也睡不着", "relevant_ids": [13, 24], "category": "multi"},
-  {"id": "q08", "query": "今天股票涨了不少", "relevant_ids": [], "category": "negative"},
+  {"id": "q08", "query": "今天股票涨了不少", "relevant_ids": [], "category": "negative", "probe": "unrelated"},
   {"id": "q09", "query": "最近又在单曲循环周杰伦的老歌", "relevant_ids": [5], "category": "lexical"},
   {"id": "q10", "query": "今天去健身房练腿，练完走不动了", "relevant_ids": [22], "category": "lexical"},
   {"id": "q11", "query": "等下老板要跟我语音，好烦", "relevant_ids": [7], "category": "semantic"},
@@ -20,6 +20,14 @@
   {"id": "q19", "query": "你别老跟我讲大道理行不行", "relevant_ids": [20], "category": "semantic"},
   {"id": "q20", "query": "好久没回老家了，不知道二老身体怎么样", "relevant_ids": [16, 11], "category": "multi"},
   {"id": "q21", "query": "项目上线那阵天天熬夜，现在总算能喘口气了", "relevant_ids": [8, 13], "category": "multi"},
-  {"id": "q22", "query": "最近在学着做蛋糕", "relevant_ids": [], "category": "negative"},
-  {"id": "q23", "query": "今天下雨了，出门忘带伞", "relevant_ids": [], "category": "negative"}
+  {"id": "q22", "query": "最近在学着做蛋糕", "relevant_ids": [], "category": "negative", "probe": "unrelated"},
+  {"id": "q23", "query": "今天下雨了，出门忘带伞", "relevant_ids": [], "category": "negative", "probe": "unrelated"},
+  {"id": "q24", "query": "同事给我推荐了一家好吃的日料店", "relevant_ids": [], "category": "negative", "probe": "work-adjacent"},
+  {"id": "q25", "query": "我们组新来了个实习生，挺机灵的", "relevant_ids": [], "category": "negative", "probe": "work-adjacent"},
+  {"id": "q26", "query": "公司楼下新开了一家便利店", "relevant_ids": [], "category": "negative", "probe": "work-adjacent"},
+  {"id": "q27", "query": "昨天看了场足球比赛，踢得好精彩", "relevant_ids": [], "category": "negative", "probe": "near-topic"},
+  {"id": "q28", "query": "最近在追一部古装剧", "relevant_ids": [], "category": "negative", "probe": "near-topic"},
+  {"id": "q29", "query": "周日打算去逛逛宜家", "relevant_ids": [], "category": "negative", "probe": "near-topic"},
+  {"id": "q30", "query": "你知道多肉植物怎么养吗", "relevant_ids": [], "category": "negative", "probe": "unrelated"},
+  {"id": "q31", "query": "我在考虑要不要去学开车", "relevant_ids": [], "category": "negative", "probe": "unrelated"}
 ]
